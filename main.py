@@ -13,7 +13,7 @@ from data_processing import analyze_csvs
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("CSV Analyzer (доставки)")
+        self.setWindowTitle("CSV Analyzer (Курьерские карты)")
         self.setMinimumSize(640, 360)
 
         # Состояние
@@ -31,8 +31,8 @@ class MainWindow(QMainWindow):
 
         # Результаты (итог по всем файлам)
         self.total_label = QLabel("Выполнено всего: —")
-        self.p_label     = QLabel("Постоматы (П): —")
-        self.other_label = QLabel("Остальные: —")
+        self.p_label     = QLabel("Постоматы: —")
+        self.other_label = QLabel("Доставки/Заявки: —")
         for w in (self.total_label, self.p_label, self.other_label):
             w.setStyleSheet("font-size: 14px;")
 
@@ -96,8 +96,8 @@ class MainWindow(QMainWindow):
 
         # Сброс результата
         self.total_label.setText("Выполнено всего: —")
-        self.p_label.setText("Постоматы (П): —")
-        self.other_label.setText("Остальные: —")
+        self.p_label.setText("Постоматы: —")
+        self.other_label.setText("Доставки/Заявки: —")
         self.details.clear()
 
     def run_analysis(self):
@@ -108,15 +108,15 @@ class MainWindow(QMainWindow):
             res = analyze_csvs(self.selected_paths)
             totals = res["totals"]
             self.total_label.setText(f"Выполнено всего: {totals['total_completed']}")
-            self.p_label.setText(f"Постоматы (П): {totals['postomats']}")
-            self.other_label.setText(f"Остальные: {totals['others']}")
+            self.p_label.setText(f"Постоматы: {totals['postomats']}")
+            self.other_label.setText(f"Доставки/Заявки: {totals['others']}")
 
             # Детали: пер-файл + ошибки
             lines = []
             if res["per_file"]:
                 lines.append("Детали по файлам:")
                 for row in res["per_file"]:
-                    lines.append(f"- {Path(row['file']).name}: выполнено={row['total_completed']}, П={row['postomats']}, остальные={row['others']}")
+                    lines.append(f"- {Path(row['file']).name}: выполнено={row['total_completed']}, П={row['postomats']}, Доставки/Заявки={row['others']}")
             if res["errors"]:
                 lines.append("\n⚠️ Ошибки при обработке:")
                 for err in res["errors"]:
