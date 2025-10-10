@@ -1,17 +1,19 @@
-import pandas as pd
 from pathlib import Path
+from typing import List, Dict, Any
+import pandas as pd
 
-def _smart_read_csv(p: Path):
-    # Пробуем частые кодировки и разделители (auto/;/,)
+
+def _smart_read_csv(p: Path) -> pd.DataFrame:
+    # Пробуем типичные кодировки и разделители
     for enc in ("utf-8-sig", "cp1251", "utf-8"):
         for sep in (None, ";", ","):
             try:
-                df = pd.read_csv(p, sep=sep, engine="python", encoding=enc)
-                return df
+                return pd.read_csv(p, sep=sep, engine="python", encoding=enc)
             except Exception:
                 continue
-    # Последняя попытка — пусть pandas сам ругнётся понятной ошибкой
+    # Последняя попытка — пусть pandas поднимет понятную ошибку
     return pd.read_csv(p)
+
 
 def _normalize_columns(df: pd.DataFrame) -> pd.DataFrame:
     cols = []
@@ -22,37 +24,23 @@ def _normalize_columns(df: pd.DataFrame) -> pd.DataFrame:
     out.columns = cols
     return out
 
-def _pick_column(df_norm: pd.DataFrame, candidates) -> str | None:
-    # точное попадание
+
+def _pick_column(df_norm: pd.DataFrame, candidates) -> str:
     for cand in candidates:
         if cand in df_norm.columns:
             return cand
-    # подстрока
     for col in df_norm.columns:
         for cand in candidates:
             if cand in col:
                 return col
-    return None
+    raise KeyError(f"Не найдена колонка из списка: {candidates}. Доступные: {list(df_norm.columns)}")
 
-def analyze_csv(path: str | Path) -> dict:
-    """
-    Возвращает словарь:
-      total_completed — выполнено всего
-      postomats      — из них постоматы (Тип Адреса == 'П')
-      others         — остальные
-      used_status_col, used_type_col — какие колонки использованы
-    """
-    p = Path(path)
-    df = _smart_read_csv(p)
+
+def _count_in_df(df: pd.DataFrame) -> Dict[str, int]:
     df_norm = _normalize_columns(df)
 
     status_col = _pick_column(df_norm, ["статус задания", "статус", "статус_задания"])
     type_col   = _pick_column(df_norm, ["тип адреса", "тип_адреса", "тип точки", "тип_точки", "тип"])
-
-    if status_col is None:
-        raise KeyError(f"Не найден столбец статуса. Доступные колонки: {list(df_norm.columns)}")
-    if type_col is None:
-        raise KeyError(f"Не найден столбец типа адреса. Доступные колонки: {list(df_norm.columns)}")
 
     status_series = (
         df_norm[status_col].astype(str).str.strip().str.lower().str.replace("ё", "е", regex=False)
@@ -68,6 +56,32 @@ def analyze_csv(path: str | Path) -> dict:
         "total_completed": total_completed,
         "postomats": postomats,
         "others": others,
-        "used_status_col": status_col,
-        "used_type_col": type_col,
     }
+
+
+def analyze_csvs(paths: List[Path]) -> Dict[str, Any]:
+    """
+    Принимает список путей к CSV.
+    Возвращает словарь с общими итогами и списком ошибок по файлам, если были.
+    {
+      totals: { total_completed, postomats, others },
+      per_file: [{file, total_completed, postomats, others}],
+      errors: [{file, error}]
+    }
+    """
+    totals = {"total_completed": 0, "postomats": 0, "others": 0}
+    per_file = []
+    errors = []
+
+    for p in paths:
+        try:
+            df = _smart_read_csv(p)
+            counts = _count_in_df(df)
+            per_file.append({"file": str(p), **counts})
+            totals["total_completed"] += counts["total_completed"]
+            totals["postomats"] += counts["postomats"]
+            totals["others"] += counts["others"]
+        except Exception as e:
+            errors.append({"file": str(p), "error": str(e)})
+
+    return {"totals": totals, "per_file": per_file, "errors": errors}
