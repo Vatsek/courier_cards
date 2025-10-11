@@ -7,25 +7,27 @@ from PyQt6.QtWidgets import (
 )
 from PyQt6.QtCore import Qt
 
-from data_processing import analyze_csvs, process_kt_excels
+from data_processing import analyze_csvs, process_kt_excels, analyze_pm_excels
 
 
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("CDEK Helper")
-        self.setMinimumSize(720, 420)
+        self.setWindowTitle("CDEK helper")
+        self.setMinimumSize(820, 480)
 
         # Состояние
         self.selected_paths: List[Path] = []
 
         # Кнопки
-        self.pick_btn = QPushButton("Выбрать файлы…")         # CSV и Excel
-        self.run_btn  = QPushButton("Посчитать доставки")     # анализ CSV
-        self.kt_btn   = QPushButton("КТ (очистить Excel)")    # очистка Excel
+        self.pick_btn = QPushButton("Выбрать файлы…")          # CSV и Excel
+        self.run_btn  = QPushButton("Посчитать доставки")      # анализ CSV
+        self.kt_btn   = QPushButton("КТ (очистить Excel)")     # очистка Excel
+        self.pm_btn   = QPushButton("Показать ПМ")             # последняя миля
 
         self.run_btn.setEnabled(False)
         self.kt_btn.setEnabled(False)
+        self.pm_btn.setEnabled(False)
 
         # Инфо о файлах
         self.file_label = QLabel("Файлы не выбраны")
@@ -40,9 +42,10 @@ class MainWindow(QMainWindow):
             w.setStyleSheet("font-size: 14px;")
 
         hint = QLabel(
-            "«Посчитать доставки» считает только выбранные CSV (строки со статусом «Выполнено»). "
-            "Кнопка «КТ» обрабатывает выбранные Excel-файлы (.xlsx/.xls/.xlsm): "
-            "оставляет нужные столбцы и сохраняет <имя>_KT.xlsx с автоподбором ширины."
+            "«Посчитать доставки» считает выбранные CSV (строки со статусом «Выполнено»). "
+            "«КТ» очищает выбранные Excel (.xlsx/.xls/.xlsm): оставляет нужные столбцы и сохраняет <имя>_KT.xlsx. "
+            "«Показать ПМ» — извлекает метрику «Ср. срок на последней миле для 2 якоря без СДД, дн» "
+            "для: Декабрьская=MSK650, Живова=MSK963, Мневники=MSK1125, Твардовского=MSK2469."
         )
         hint.setStyleSheet("color: #888; font-size: 12px;")
         hint.setWordWrap(True)
@@ -50,14 +53,15 @@ class MainWindow(QMainWindow):
         # Детали/лог
         self.details = QTextEdit()
         self.details.setReadOnly(True)
-        self.details.setPlaceholderText("Здесь появятся детали по анализу CSV и обработке Excel (КТ).")
-        self.details.setMinimumHeight(160)
+        self.details.setPlaceholderText("Здесь появятся детали по анализу CSV, КТ и ПМ.")
+        self.details.setMinimumHeight(200)
 
         # Верхняя панель
         top = QHBoxLayout()
         top.addWidget(self.pick_btn)
         top.addWidget(self.run_btn)
         top.addWidget(self.kt_btn)
+        top.addWidget(self.pm_btn)
         top.addStretch()
 
         # Разделитель
@@ -89,6 +93,7 @@ class MainWindow(QMainWindow):
         self.pick_btn.clicked.connect(self.pick_files)
         self.run_btn.clicked.connect(self.run_analysis_csv)
         self.kt_btn.clicked.connect(self.run_kt_excels)
+        self.pm_btn.clicked.connect(self.run_pm_excels)
 
     def pick_files(self):
         paths, _ = QFileDialog.getOpenFileNames(
@@ -108,6 +113,7 @@ class MainWindow(QMainWindow):
         self.file_label.setText(f"Выбрано файлов: {len(self.selected_paths)} (CSV: {csv_count}, Excel: {xls_count})")
         self.run_btn.setEnabled(csv_count > 0)
         self.kt_btn.setEnabled(xls_count > 0)
+        self.pm_btn.setEnabled(xls_count > 0)
 
         # Сброс результатов CSV
         self.total_label.setText("Выполнено всего: —")
@@ -178,6 +184,53 @@ class MainWindow(QMainWindow):
 
         except Exception as e:
             QMessageBox.critical(self, "Ошибка КТ", str(e))
+
+    def run_pm_excels(self):
+        xls_paths = [p for p in self.selected_paths if p.suffix.lower() in (".xlsx", ".xls", ".xlsm")]
+        if not xls_paths:
+            QMessageBox.information(self, "Нет Excel", "Выбери хотя бы один Excel-файл (.xlsx/.xls/.xlsm).")
+            return
+        try:
+            res = analyze_pm_excels(xls_paths)
+
+            lines = []
+            for item in res["results"]:
+                vals = item["values"]
+
+                def fmt(v):
+                    if v is None:
+                        return "—"
+                    try:
+                        f = float(v)
+                        s = ("%.4f" % f).rstrip("0").rstrip(".")
+                        return s
+                    except Exception:
+                        return str(v)
+
+                lines.append(f"ПМ — файл: {Path(item['file']).name} (лист: {item.get('sheet', '—')})")
+                lines.append(f"  Декабрьская: {fmt(vals.get('Декабрьская'))}")
+                lines.append(f"  Живова:      {fmt(vals.get('Живова'))}")
+                lines.append(f"  Мневники:    {fmt(vals.get('Мневники'))}")
+                lines.append(f"  Твардовского:{fmt(vals.get('Твардовского'))}")
+                lines.append("")  # пустая строка между файлами
+
+            if res["errors"]:
+                lines.append("ПМ — ошибки:")
+                for err in res["errors"]:
+                    lines.append(f"- {Path(err['file']).name}: {err['error']}")
+
+            if res["skipped"]:
+                lines.append("\nПМ — пропущены (не Excel):")
+                for s in res["skipped"]:
+                    lines.append(f"- {Path(s['file']).name}: {s['reason']}")
+
+            text = "\n".join(lines).strip() or "ПМ: нет данных."
+            self.details.append(text)
+
+            QMessageBox.information(self, "ПМ готово", "Значения последней мили извлечены. Смотри детали внизу.")
+
+        except Exception as e:
+            QMessageBox.critical(self, "Ошибка ПМ", str(e))
 
 
 def main():
