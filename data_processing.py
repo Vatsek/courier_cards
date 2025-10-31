@@ -42,25 +42,40 @@ def _pick_column(df_norm: pd.DataFrame, candidates: Iterable[str]) -> str:
 
 
 def _count_in_df(df: pd.DataFrame) -> Dict[str, int]:
-    """Подсчёт: выполнено всего, постоматы (П), прочие."""
+    """Подсчёт: выполнено всего, постоматы (П), ПВЗ, доставки и заявки."""
     df_norm = _normalize_columns(df)
     status_col = _pick_column(df_norm, ["статус задания", "статус", "статус_задания"])
     type_col   = _pick_column(df_norm, ["тип адреса", "тип_адреса", "тип точки", "тип_точки", "тип"])
 
+    # фильтруем выполненные
     status_series = df_norm[status_col].astype(str).str.strip().str.lower().str.replace("ё", "е", regex=False)
     done_mask = status_series.eq("выполнено")
-    total_completed = int(done_mask.sum())
 
     type_series = df_norm[type_col].astype(str).str.strip().str.upper()
-    postomats = int((done_mask & type_series.eq("П")).sum())
-    others = int(total_completed - postomats)
 
-    return {"total_completed": total_completed, "postomats": postomats, "others": others}
+    # категории
+    postomats = int((done_mask & type_series.eq("П")).sum())
+    pvz = int((done_mask & type_series.eq("ПВЗ")).sum())
+    deliveries = int((done_mask & type_series.eq("Д")).sum())
+    orders = int((done_mask & type_series.eq("З")).sum())
+
+    # остальные (всё выполненное, что не попало в эти категории)
+    total_completed = int(done_mask.sum())
+    categorized = postomats + pvz + deliveries + orders
+
+
+    return {
+        "total_completed": total_completed,
+        "postomats": postomats,
+        "pvz": pvz,
+        "deliveries": deliveries,
+        "orders": orders,
+    }
 
 
 def analyze_csvs(paths: List[Path]) -> Dict[str, Any]:
     """Считает итоги по CSV среди выбранных путей (Excel игнорируется)."""
-    totals = {"total_completed": 0, "postomats": 0, "others": 0}
+    totals = {"total_completed": 0, "postomats": 0, "pvz": 0, "deliveries": 0, "orders": 0}
     per_file, errors = [], []
 
     for p in paths:
@@ -70,9 +85,8 @@ def analyze_csvs(paths: List[Path]) -> Dict[str, Any]:
             df = _smart_read_csv(p)
             counts = _count_in_df(df)
             per_file.append({"file": str(p), **counts})
-            totals["total_completed"] += counts["total_completed"]
-            totals["postomats"] += counts["postomats"]
-            totals["others"] += counts["others"]
+            for k in totals:
+                totals[k] += counts[k]
         except Exception as e:
             errors.append({"file": str(p), "error": str(e)})
 
@@ -80,8 +94,9 @@ def analyze_csvs(paths: List[Path]) -> Dict[str, Any]:
 
 
 # =========================
-# «КТ» обработка Excel
+# Остальная логика (КТ и ПМ) — без изменений
 # =========================
+
 KEEP_COLUMNS_KT = [
     "Номер заказа",
     "Код офиса местонахождения",
@@ -92,7 +107,6 @@ KEEP_COLUMNS_KT = [
 
 
 def _autosize_columns_xlsx(xlsx_path: Path, df_out: pd.DataFrame) -> None:
-    """Автоподбор ширины столбцов (openpyxl)."""
     import openpyxl
     from openpyxl.utils import get_column_letter
     wb = openpyxl.load_workbook(xlsx_path)
@@ -108,27 +122,20 @@ def _autosize_columns_xlsx(xlsx_path: Path, df_out: pd.DataFrame) -> None:
 
 
 def process_kt_excels(paths: List[Path], keep_columns: List[str] = None) -> Dict[str, Any]:
-    """
-    Оставляет только нужные столбцы в Excel(.xlsx/.xls/.xlsm), сохраняет <имя>_KT.xlsx, автоширина.
-    """
     if keep_columns is None:
         keep_columns = KEEP_COLUMNS_KT
     saved, skipped, errors = [], [], []
-
     for p in paths:
         ext = p.suffix.lower()
         if ext not in (".xlsx", ".xls", ".xlsm"):
             skipped.append({"file": str(p), "reason": "Не Excel"})
             continue
         try:
-            try:
-                import openpyxl  # noqa
-            except ImportError:
-                raise RuntimeError("Нужен 'openpyxl' → pip install openpyxl")
+            import openpyxl
             df = pd.read_excel(p)
             existing = [c for c in keep_columns if c in df.columns]
             if not existing:
-                raise KeyError(f"Нет требуемых столбцов. Есть: {list(df.columns)}; Ожидались: {keep_columns}")
+                raise KeyError(f"Нет нужных столбцов. Есть: {list(df.columns)}; Ожидались: {keep_columns}")
             df_out = df[existing].copy()
             out_path = p.with_name(f"{p.stem}_KT.xlsx")
             df_out.to_excel(out_path, index=False)
@@ -136,12 +143,11 @@ def process_kt_excels(paths: List[Path], keep_columns: List[str] = None) -> Dict
             saved.append({"file": str(p), "saved_as": str(out_path), "kept_columns": existing})
         except Exception as e:
             errors.append({"file": str(p), "error": str(e)})
-
     return {"saved": saved, "skipped": skipped, "errors": errors}
 
 
 # =========================
-# «Показать ПМ» (последняя миля)
+# ПМ (последняя миля)
 # =========================
 PM_CODES = {
     "Декабрьская": "MSK650",
@@ -168,7 +174,6 @@ def _find_metric_col_loose(df: pd.DataFrame) -> str:
     for c in df.columns:
         if (nc := _norm_text(c)) and (target in nc or nc in target):
             return c
-    # эвристика
     keywords = ["последней", "мил", "якор", "сдд", "срок"]
     for c in df.columns:
         nc = _norm_text(c)
@@ -205,7 +210,6 @@ def _extract_pm_from_df(df: pd.DataFrame) -> Dict[str, Any]:
 
 
 def analyze_pm_excels(paths: List[Path]) -> Dict[str, Any]:
-    """Перебирает все листы Excel и берёт тот, где нашлось больше значений ПМ."""
     results, errors, skipped = [], [], []
     for p in paths:
         ext = p.suffix.lower()
@@ -213,10 +217,7 @@ def analyze_pm_excels(paths: List[Path]) -> Dict[str, Any]:
             skipped.append({"file": str(p), "reason": "Не Excel"})
             continue
         try:
-            try:
-                import openpyxl  # noqa
-            except ImportError:
-                raise RuntimeError("Нужен 'openpyxl' → pip install openpyxl")
+            import openpyxl
             xls = pd.read_excel(p, sheet_name=None)
             best_sheet, best_vals, best_score = None, None, -1
             for sheet_name, df in xls.items():

@@ -136,25 +136,12 @@ class MainWindow(QMainWindow):
             # Выводим только после нажатия
             self.show_result_lines([
                 f"Выполнено всего: {totals['total_completed']}",
+                f"Доставки: {totals['deliveries']}",
+                f"Заявки: {totals['orders']}",
                 f"Постоматы: {totals['postomats']}",
-                f"Доставки/Заявки: {totals['others']}",
+                f"Передача на ПВЗ: {totals['pvz']}",
+                # f"Остальные: {totals['others']}",
             ])
-
-            # Подробности — в журнал (опционально)
-            lines = []
-            if res["per_file"]:
-                lines.append("CSV — детали по файлам:")
-                for row in res["per_file"]:
-                    lines.append(
-                        f"- {Path(row['file']).name}: выполнено={row['total_completed']}, "
-                        f"Постоматы={row['postomats']}, Доставки/Заявки={row['others']}"
-                    )
-            if res["errors"]:
-                lines.append("\nCSV — ошибки:")
-                for err in res["errors"]:
-                    lines.append(f"- {Path(err['file']).name}: {err['error']}")
-            if lines:
-                self.details.append("\n".join(lines))
         except Exception as e:
             QMessageBox.critical(self, "Ошибка анализа CSV", str(e))
 
@@ -166,7 +153,7 @@ class MainWindow(QMainWindow):
         try:
             res = process_kt_excels(xls_paths)
 
-            # Короткий итог — только по кнопке
+            #Короткий итог — только по кнопке
             self.show_result_lines([f"КТ: создано файлов — {len(res['saved'])}"])
 
             # Детали в журнал
