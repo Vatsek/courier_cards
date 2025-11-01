@@ -116,8 +116,9 @@ class MainWindow(QMainWindow):
 
             self.show_result_lines([
                 f"Выполнено всего: {totals['total_completed']}",
-                f"Доставки: {totals.get('deliveries', 0)}",
-                f"Заявки: {totals.get('orders', 0)}",
+                # f"Доставки: {totals.get('deliveries', 0)}",
+                # f"Заявки: {totals.get('orders', 0)}",
+                f"Доставки + заявки: {totals.get('orders', 0)+totals.get('deliveries', 0)}",
                 f"Постоматы: {totals['postomats']}",
                 f"Передача на ПВЗ: {totals.get('pvz', 0)}",
             ])
