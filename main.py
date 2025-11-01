@@ -1,9 +1,11 @@
 import sys
+import re
 from pathlib import Path
 from typing import List
+from datetime import datetime
 from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
-    QPushButton, QLabel, QFileDialog
+    QPushButton, QLabel, QFileDialog, QTextEdit
 )
 from PyQt6.QtCore import Qt
 
@@ -32,21 +34,19 @@ class MainWindow(QMainWindow):
         # Инфо о файлах
         self.file_label = QLabel("Файлы не выбраны")
         self.file_label.setWordWrap(True)
-        self.file_label.setStyleSheet("color: #666;")
+        self.file_label.setStyleSheet("color: #ccc;")
 
         # Блок для вывода результатов
         self.result_box = QVBoxLayout()
         self.result_labels: list[QLabel] = []
 
         def show_result_lines(lines: list[str]):
-            # удалить предыдущие строки
             for lbl in self.result_labels:
                 lbl.deleteLater()
             self.result_labels.clear()
-            # добавить новые
             for line in lines:
                 lbl = QLabel(line)
-                lbl.setStyleSheet("font-size: 14px;")
+                lbl.setStyleSheet("font-size: 14px; color: #eee;")
                 lbl.setTextInteractionFlags(
                     Qt.TextInteractionFlag.TextSelectableByMouse |
                     Qt.TextInteractionFlag.TextSelectableByKeyboard
@@ -55,6 +55,22 @@ class MainWindow(QMainWindow):
                 self.result_labels.append(lbl)
 
         self.show_result_lines = show_result_lines
+
+        # Лог — тёмный, аккуратный, ровный
+        self.log = QTextEdit()
+        self.log.setReadOnly(True)
+        self.log.setPlaceholderText("Лог по файлам…")
+        self.log.setMinimumHeight(160)
+        self.log.setStyleSheet("""
+            QTextEdit {
+                font-family: 'Courier New', monospace;
+                font-size: 13px;
+                color: #ddd;
+                background-color: #1e1e1e;
+                border: 1px solid #555;
+                padding: 6px;
+            }
+        """)
 
         # Верхняя панель
         top = QHBoxLayout()
@@ -69,6 +85,7 @@ class MainWindow(QMainWindow):
         root.addLayout(top)
         root.addWidget(self.file_label)
         root.addLayout(self.result_box)
+        root.addWidget(self.log)
         root.addStretch()
 
         container = QWidget()
@@ -98,13 +115,28 @@ class MainWindow(QMainWindow):
         csv_count = sum(1 for p in self.selected_paths if p.suffix.lower() == ".csv")
         xls_count = sum(1 for p in self.selected_paths if p.suffix.lower() in (".xlsx", ".xls", ".xlsm"))
 
-        self.file_label.setText(f"Выбрано файлов: {len(self.selected_paths)} (CSV: {csv_count}, Excel: {xls_count})")
+        self.file_label.setText(
+            f"Выбрано файлов: {len(self.selected_paths)} (CSV: {csv_count}, Excel: {xls_count})"
+        )
         self.run_btn.setEnabled(csv_count > 0)
         self.kt_btn.setEnabled(xls_count > 0)
         self.pm_btn.setEnabled(xls_count > 0)
 
-        # Очистить результаты
+        # Очистить результаты и лог
         self.show_result_lines([])
+        self.log.clear()
+
+    def _extract_date_from_name(self, filename: str):
+        """Извлекает дату из имени файла (09_10_2025, 2025-10-09 и т.п.)."""
+        match = re.search(r"(\d{2})[._-](\d{2})[._-](\d{4})", filename)
+        if match:
+            day, month, year = match.groups()
+            try:
+                dt = datetime(int(year), int(month), int(day))
+                return f"{day}.{month}.{year}", dt
+            except ValueError:
+                pass
+        return "Нет даты", datetime.min
 
     def run_analysis_csv(self):
         csv_paths = [p for p in self.selected_paths if p.suffix.lower() == ".csv"]
@@ -114,14 +146,39 @@ class MainWindow(QMainWindow):
             res = analyze_csvs(csv_paths)
             totals = res["totals"]
 
+            # Основной блок
             self.show_result_lines([
                 f"Выполнено всего: {totals['total_completed']}",
-                # f"Доставки: {totals.get('deliveries', 0)}",
-                # f"Заявки: {totals.get('orders', 0)}",
-                f"Доставки + заявки: {totals.get('orders', 0)+totals.get('deliveries', 0)}",
+                f"Д/З: {totals.get('orders', 0) + totals.get('deliveries', 0)}",
                 f"Постоматы: {totals['postomats']}",
                 f"Передача на ПВЗ: {totals.get('pvz', 0)}",
             ])
+
+            # Лог по каждому файлу
+            log_entries = []
+            for f in res["per_file"]:
+                date_str, dt = self._extract_date_from_name(Path(f['file']).name)
+                log_entries.append({
+                    "date_str": date_str,
+                    "dt": dt,
+                    "dz": f['orders'] + f['deliveries'],
+                    "postomats": f['postomats'],
+                    "pvz": f['pvz'],
+                })
+
+            # Сортировка по дате (по возрастанию)
+            log_entries.sort(key=lambda x: x["dt"])
+
+            # Табличный вывод
+            lines = ["Дата         | Д/З  | Постоматы | ПВЗ",
+                     "---------------------------------------"]
+            for e in log_entries:
+                lines.append(
+                    f"{e['date_str']:<12} | {e['dz']:<4} | {e['postomats']:<9} | {e['pvz']:<3}"
+                )
+
+            self.log.clear()
+            self.log.append("\n".join(lines))
 
         except Exception as e:
             self.show_result_lines([f"Ошибка анализа: {e}"])
