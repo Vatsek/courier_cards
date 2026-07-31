@@ -155,7 +155,7 @@ PM_CODES = {
     "Мневники": "MSK1125",
     "Твардовского": "MSK2469",
 }
-PM_METRIC_RAW = "Ср. срок на последней миле для 2 якоря без СДД, дн"
+PM_METRIC_RAW = "Ср. срок на последней миле без СДД (с вычетом ночного времени), дн"
 
 
 def _norm_text(s: str) -> str:
@@ -174,7 +174,7 @@ def _find_metric_col_loose(df: pd.DataFrame) -> str:
     for c in df.columns:
         if (nc := _norm_text(c)) and (target in nc or nc in target):
             return c
-    keywords = ["последней", "мил", "якор", "сдд", "срок"]
+    keywords = ["последней", "мил", "сдд", "ночного", "времени", "срок"]
     for c in df.columns:
         nc = _norm_text(c)
         if sum(kw in nc for kw in keywords) >= 3:
